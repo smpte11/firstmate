@@ -1898,22 +1898,31 @@ real_path_or_raw() {  # <path>
 # herdr-sm-spaces-k4). Both branches converge on the same $T ("target") string
 # that every downstream operation (send/capture/kill) already treats as opaque
 # per-backend routing (fm_backend_resolve_selector).
+
+# spawn_path_is_isolated_worktree is the single owner of "this path is a
+# disposable task worktree, not the primary checkout": the path must resolve,
+# must be the TOP LEVEL of a git worktree, and must not be the project itself.
+# Both the worktree-detection poll below and validate_spawn_worktree's refusal
+# ask it, so a path the poll accepts can never fail the assertion for a reason
+# the poll did not already test. It sets SPAWN_WORKTREE_TOP for the refusal
+# message and returns non-zero instead of exiting, so a poll can simply keep
+# waiting on a path that does not qualify yet.
+spawn_path_is_isolated_worktree() {  # <path>
+  local path=$1 real top_real
+  SPAWN_WORKTREE_TOP=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || true)
+  real=$(cd "$path" 2>/dev/null && pwd -P) || return 1
+  [ -n "$real" ] || return 1
+  [ -n "$SPAWN_WORKTREE_TOP" ] || return 1
+  top_real=$(cd "$SPAWN_WORKTREE_TOP" 2>/dev/null && pwd -P) || return 1
+  [ "$real" = "$top_real" ] || return 1
+  [ "$real" != "$PROJ_ABS_REAL" ]
+}
+
 validate_spawn_worktree() {  # <source> <inspect-target>
-  local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real
-  wt_real=
-  if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
-    wt_real=
-  fi
-  proj_real=$PROJ_ABS_REAL
-  wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null || true)
-  wt_top_real=
-  if ! wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P); then
-    wt_top_real=
-  fi
-  if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
-    echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
-    exit 1
-  fi
+  local source=$1 inspect_target=$2
+  spawn_path_is_isolated_worktree "$WT" && return 0
+  echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${SPAWN_WORKTREE_TOP:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
+  exit 1
 }
 
 # A pooled slot whose only deviation is a submodule gitlink is stale, not dirty:
@@ -2493,42 +2502,48 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # automatic-rename slips through), display-message -t <bad-name> falls back to the
   # active client's window, which would misread firstmate's OWN pane path as the
   # worktree and tangle a hook into the primary checkout. The window id never lies.
-  # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
-  # prefix would otherwise make the pane's OS-level cwd read differ from
-  # PROJ_ABS on the very first poll, before the pane has actually moved.
+  # "Not the project directory" is NOT evidence that the pane entered its
+  # worktree, so the poll asks spawn_path_is_isolated_worktree instead. A
+  # backend can report a real-looking path that is no worktree at all: herdr's
+  # `pane get` answers `.foreground_cwd` from the pty's foreground process
+  # GROUP, and while treehouse hands the terminal over to its worktree subshell
+  # that group briefly holds treehouse, its git child, and the new shell at
+  # once; herdr resolves that to none of them and returns the operator's home
+  # directory for about a second (tmux's pane_current_path tracks the pane's own
+  # shell and has no such fallback). Accepting $HOME as the worktree turned a
+  # transient into a fatal launch refusal that blamed treehouse get. Anything
+  # that is not yet an isolated worktree is simply not settled, so the poll
+  # keeps waiting and the existing 60s timeout owns a genuinely stuck acquire.
+  # The predicate compares against PROJ_ABS_REAL (physical), not PROJ_ABS: a
+  # symlinked project prefix would otherwise make the pane's OS-level cwd read
+  # differ from PROJ_ABS before the pane has actually moved.
   #
-  # A single read that already differs from PROJ_ABS_REAL is not proof the pane
-  # settled there: on some tmux/WSL setups a brand-new window's pane_current_path
-  # transiently reports an unrelated stale path (seen live as another real git
-  # checkout entirely) before the shell catches up with treehouse get's cd. That
-  # stale path still passes the PROJ_ABS_REAL comparison and validate_spawn_worktree
-  # below (it resolves to a real, distinct worktree top-level too), so accepting it
-  # on one read alone silently records the wrong worktree= in state/<id>.meta. Require
-  # two consecutive reads to agree on the same non-project path before accepting it;
-  # a mismatch just becomes the new candidate rather than resetting the wait, so a
-  # pane that is already settled by the first real read only costs the one existing
-  # inter-poll sleep as confirmation, not a whole extra cycle on top.
+  # Qualifying once is still not proof: on some tmux/WSL setups a brand-new
+  # window's pane_current_path transiently reports an unrelated stale path (seen
+  # live as another real git checkout entirely) before the shell catches up with
+  # treehouse get's cd, and that path is a real, distinct worktree top-level too.
+  # Require two consecutive reads to agree before accepting it; a mismatch just
+  # becomes the new candidate rather than resetting the wait, so a pane that is
+  # already settled by the first real read only costs the one existing inter-poll
+  # sleep as confirmation, not a whole extra cycle on top.
+  worktree_polls=${FM_SPAWN_WORKTREE_POLLS:-60}
   candidate=""
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "$worktree_polls"); do
     p=$(spawn_current_path "$WT_TARGET" || true)
-    if [ -n "$p" ]; then
+    if [ -n "$p" ] && spawn_path_is_isolated_worktree "$p"; then
       p_real=$(real_path_or_raw "$p")
-      if [ "$p_real" != "$PROJ_ABS_REAL" ]; then
-        if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
-          WT="$p"
-          break
-        fi
-        candidate="$p_real"
-      else
-        candidate=""
+      if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
+        WT="$p"
+        break
       fi
+      candidate="$p_real"
     else
       candidate=""
     fi
     sleep 1
   done
   if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
+    echo "error: treehouse get did not enter a worktree within ${worktree_polls}s; inspect window $T" >&2
     exit 1
   fi
 

@@ -168,16 +168,25 @@ test_spawn_isolation_abort() {
   git -C "$proj" worktree add -q --detach "$TMP_ROOT/spawn-wt" >/dev/null 2>&1
   mkdir -p "$TMP_ROOT/spawn-notgit" "$proj/sub"
 
+  # A pane that never reaches an isolated worktree is never latched: the
+  # worktree-detection poll keeps waiting and the spawn refuses on its timeout,
+  # so neither of the two aborts below can record a worktree. Shorten the poll
+  # so each abort costs seconds rather than the full production wait.
+  export FM_SPAWN_WORKTREE_POLLS=3
+
   # Abort: the pane resolves to a plain non-git directory (not a worktree at all).
   out=$(run_spawn "$home" abort-notgit-dd4 "$proj" "$TMP_ROOT/spawn-notgit" "$fakebin"); status=$?
   expect_code 1 "$status" "spawn into a non-worktree dir should abort"
-  assert_contains "$out" "did not yield an isolated worktree" "non-worktree spawn lacked the isolation error"
+  assert_contains "$out" "treehouse get did not enter a worktree" "non-worktree spawn lacked the worktree-detection refusal"
   assert_absent "$home/state/abort-notgit-dd4.meta" "aborted spawn must not record meta"
 
   # Abort: the pane resolves INTO the primary checkout (a subdir of PROJ_ABS).
   out=$(run_spawn "$home" abort-primary-ee5 "$proj" "$proj/sub" "$fakebin"); status=$?
   expect_code 1 "$status" "spawn landing inside the primary checkout should abort"
-  assert_contains "$out" "did not yield an isolated worktree" "primary-checkout spawn lacked the isolation error"
+  assert_contains "$out" "treehouse get did not enter a worktree" "primary-checkout spawn lacked the worktree-detection refusal"
+  assert_absent "$home/state/abort-primary-ee5.meta" "aborted spawn must not record meta"
+
+  unset FM_SPAWN_WORKTREE_POLLS
 
   # Proceed: the pane resolves to a genuine, isolated worktree.
   out=$(run_spawn "$home" ok-isolated-ff6 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?
