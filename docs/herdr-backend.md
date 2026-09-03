@@ -131,6 +131,8 @@ If lock, snapshot, pane identity, or restoration is ambiguous, cleanup warns and
 Recovery is deliberately conservative and presentation-only.
 An existing journal suppresses another projected create.
 Before any recovery mutation, Firstmate holds both the task spawn lock and the named-session presentation lock.
+A holder keeps that presentation lock for its whole launch, so a resume waits out one in-flight projected spawn - the worktree-detection poll's own bound plus a margin - instead of refusing while that spawn is still legitimately running.
+A fresh projected create keeps the short bound instead, because it can step aside into the flat layout and a resume cannot.
 A same-identity version 2 binding may replace one exact agent-free restart husk in place only when the physical home, session, metadata endpoint, unique token match, workspace shape and labels, parent identity and placement, and non-target focus snapshot all agree.
 The replacement tab and pane are created and verified before the old pane is rechecked and closed, then the journal advances atomically to the replacement endpoint before metadata publication.
 The reclaim path never moves, closes, deletes, or renames a workspace and never touches a parent, sibling, captain, or foreign pane.
@@ -158,7 +160,7 @@ Operational compromises:
 
 - Grouping is best-effort; only an exact same-identity version 2 binding survives a Herdr restart in place.
 - A failed journal publication or projected workspace create stops that spawn instead of falling back flat, so a Herdr create failure surfaces as a spawn failure in every Herdr home rather than only in homes that opted in; every earlier degradation on the fresh projected-create path (no session server, contended presentation lock, absent or ambiguous parent) still warns and continues flat.
-- Recovery of an existing presentation journal deliberately refuses the spawn when the shared presentation lock is contended rather than falling back flat, and default-on makes that refusal reachable in any Herdr home.
+- Recovery of an existing presentation journal deliberately refuses the spawn once its wait for the shared presentation lock elapses, rather than falling back flat, and default-on makes that refusal reachable in any Herdr home.
 - Existing layouts are not force-renamed or rearranged.
 - Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces; session start removes only the exact home-local, uniquely journal-correlated, childless idle-shell shape above.
@@ -204,6 +206,17 @@ tmux's `pane_current_path` tracks the pane's own shell and has no such fallback,
 
 Never treat a pane path as a worktree because it merely differs from the project directory.
 `bin/fm-spawn.sh`'s `spawn_path_is_isolated_worktree` owns that test, and its worktree-detection poll waits until a path actually is an isolated worktree on two consecutive reads.
+
+## Pane input readiness
+
+`workspace create` and `tab create` return complete pane ids before the new pane's shell reaches its first prompt.
+A command typed into that gap is echoed by the terminal and then discarded by the shell's line editor, so it never runs and no call reports an error.
+The gap is short but decisive: a spawn that only creates a tab in an existing workspace reaches its first send in well under a second, while the pane's shell needs longer than that to start.
+
+A pane's first rendered output is its prompt, so any non-whitespace on the live screen proves the shell is reading.
+`fm_backend_herdr_wait_pane_shell_reading` in `bin/backends/herdr.sh` owns that wait and reads `pane read --source visible`; `--source recent` is scrollback and stays empty until the screen scrolls, so it cannot answer this question.
+A pane that never renders within the bound is still sent its command, because sending is exactly what the unguarded path did and every caller verifies its own outcome.
+[`verification/runtime-backends.md`](verification/runtime-backends.md#pane-input-readiness) owns the live evidence.
 
 ## Endpoint metadata
 

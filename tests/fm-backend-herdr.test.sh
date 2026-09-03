@@ -2958,6 +2958,40 @@ test_send_key_normalizes_and_targets_pane() {
   pass "fm_backend_herdr_send_key: normalizes the key and targets the right pane"
 }
 
+test_send_text_line_waits_for_the_pane_shell() {
+  local dir log resp fb reads
+  # The first read reports a blank screen and the second reports the prompt,
+  # so the command must be typed only after the second one.
+  dir="$TMP_ROOT/sendtextline-wait"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  : > "$resp/1.out"
+  printf 'felbro /tmp/project\n> \n' > "$resp/2.out"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_line default:w1:p2 "treehouse get"' "$ROOT"
+  expect_code 0 $? "send_text_line should succeed once the pane's shell is reading"
+  reads=$(grep -c $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''visible' "$log")
+  [ "$reads" = 2 ] || fail "send_text_line should keep reading the live screen until it is non-blank, got $reads reads"
+  assert_contains "$(sed -n '$p' "$log")" $'\x1f''pane'$'\x1f''run'$'\x1f''w1:p2'$'\x1f''treehouse get' \
+    "send_text_line must type the command only after the pane's screen stopped being blank"
+  pass "fm_backend_herdr_send_text_line: waits for the pane's shell to render before typing into it"
+}
+
+test_send_text_line_sends_after_a_blank_pane_outlasts_the_bound() {
+  local dir log resp fb err
+  # A pane that never renders is no reason to drop the command.
+  dir="$TMP_ROOT/sendtextline-bound"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  fb=$(make_herdr_fakebin "$dir")
+  err=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_BACKEND_HERDR_PANE_READY_POLLS=2 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_line default:w1:p2 "treehouse get"' "$ROOT" 2>&1 )
+  expect_code 0 $? "send_text_line should still send when the pane never renders"
+  assert_contains "$err" "rendered nothing before its first command" \
+    "an elapsed readiness bound must be named, not silently absorbed"
+  assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''run'$'\x1f''w1:p2'$'\x1f''treehouse get' \
+    "send_text_line must still type the command after the readiness bound elapses"
+  pass "fm_backend_herdr_send_text_line: names an elapsed readiness bound and still sends the command"
+}
+
 test_kill_is_best_effort() {
   local dir log resp fb
   dir="$TMP_ROOT/kill"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -4585,6 +4619,8 @@ test_capture_calls_pane_read
 test_capture_works_around_small_lines_bug
 test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
+test_send_text_line_waits_for_the_pane_shell
+test_send_text_line_sends_after_a_blank_pane_outlasts_the_bound
 test_kill_is_best_effort
 test_current_path_reads_cwd
 test_busy_state_working_maps_to_busy

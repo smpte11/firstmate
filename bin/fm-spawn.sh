@@ -896,13 +896,19 @@ trap spawn_abort_cleanup EXIT
 # One bounded lock per live Herdr session/socket, shared across all homes.
 # <session> is required so secondmate and primary spawns serialize against the
 # same session without writing any other home's state directory.
-spawn_herdr_presentation_order_lock_acquire() {
-  local session=${1:-} attempt lock_path
+# The default 5s bound belongs to a caller that can fall back flat when the
+# lock is busy. A holder keeps this lock for its WHOLE launch - the projection
+# create, treehouse get, the worktree-detection poll, and the launch send - so
+# 5s does not cover one in-flight projected spawn (measured 5.06s on herdr
+# 0.8.2 for the smallest possible task). A caller with no flat fallback must
+# pass spawn_herdr_presentation_serialize_attempts instead.
+spawn_herdr_presentation_order_lock_acquire() {  # <session> [max-attempts]
+  local session=${1:-} max_attempts=${2:-50} attempt lock_path
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
   attempt=0
-  while [ "$attempt" -lt 50 ]; do
+  while [ "$attempt" -lt "$max_attempts" ]; do
     if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
       HERDR_PRESENTATION_ORDER_LOCK_HELD=1
       return 0
@@ -911,6 +917,16 @@ spawn_herdr_presentation_order_lock_acquire() {
     attempt=$((attempt + 1))
   done
   return 1
+}
+
+# The wait a caller needs to SERIALIZE behind one in-flight projected spawn
+# rather than step aside. The holder's own longest term is the worktree-detection
+# poll below, so that same bound owns this one, plus a margin for the launch work
+# around it.
+spawn_herdr_presentation_serialize_attempts() {
+  local polls=${FM_SPAWN_WORKTREE_POLLS:-60}
+  case "$polls" in ''|*[!0-9]*) polls=60 ;; esac
+  printf '%s' "$(( (polls + 30) * 10 ))"
 }
 
 clear_relaunch_harness_wiring() {
@@ -2189,7 +2205,11 @@ case "$BACKEND" in
           echo "error: herdr presentation recovery could not ensure its exact named session" >&2
           exit 1
         }
-        spawn_herdr_presentation_order_lock_acquire "$HERDR_SES" || {
+        # A resume cannot step aside into the flat layout without risking a
+        # duplicate agent, so it waits out a concurrent projected spawn instead
+        # of refusing while that spawn is still legitimately running.
+        spawn_herdr_presentation_order_lock_acquire "$HERDR_SES" \
+          "$(spawn_herdr_presentation_serialize_attempts)" || {
           echo "error: herdr presentation recovery could not acquire its session lock; refusing a concurrent resume" >&2
           exit 1
         }

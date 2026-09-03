@@ -302,6 +302,39 @@ The CLI matrix was checked directly:
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
+### Pane input readiness
+
+Measured 2026-09-03 against Herdr 0.8.2 in an isolated `fm-lab-` session with a nushell pane.
+
+A `tab create` response carried a complete pane id 0.13 s after the request, while the pane's first rendered output arrived at 0.65 s.
+`herdr pane run <pane> 'echo IMMEDIATE_MARKER'` issued straight after that create left `echo IMMEDIATE_MARKER` on screen with no prompt above it, a fresh prompt below it, and no output; the identical command sent after the screen went non-blank produced `WAITED_MARKER`.
+`herdr pane read <pane> --source visible` reported the prompt at 0.65 s while `--source recent` stayed empty, so only the visible screen answers the readiness question.
+
+The end-to-end proof is the projected-and-flat spawn suite, whose second flat spawn creates only a tab and so loses the race every time without the wait:
+
+```sh
+HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  tests/fm-backend-herdr-presentation-e2e.test.sh
+```
+
+Observed on Herdr 0.8.2 before the wait existed:
+
+```text
+not ok - opted-out spawn failed: error: treehouse get did not enter a worktree within 60s; inspect window fm-lab-fm-herdr-present-26489-20729:w1:p3
+```
+
+The portable regressions in `tests/fm-backend-herdr.test.sh` pin both halves: the command is typed only after the screen stops being blank, and an elapsed bound is named and still sends.
+
+### Presentation lock hold
+
+Measured 2026-09-03 against Herdr 0.8.2 in an isolated `fm-lab-` session, with the smallest possible task (`sh -c 'sleep 90'`) in a one-commit project.
+
+One projected spawn held the named-session presentation lock for 5.06 s of its 5.81 s total, because the holder keeps that lock across the projection create, `treehouse get`, the worktree-detection poll, and the launch send.
+A resume's wait for the same lock was a fixed 5.00 s, so two homes recovering concurrently after a Herdr restart could not serialize and the second refused with `herdr presentation recovery could not acquire its session lock`.
+The resume's wait is now derived from the worktree-detection poll that dominates the hold; the fresh projected-create wait is unchanged, because that path can step aside into the flat layout.
+
+The concurrent-recovery case in `tests/fm-backend-herdr-presentation-e2e.test.sh` is the end-to-end proof, and it needs a real Herdr server, so ordinary CI cannot run it.
+
 ### Submit confirmation
 
 Measured 2026-08-19 against Herdr 0.8.0 and Claude Code 2.1.236 in an isolated `fm-lab-` session.

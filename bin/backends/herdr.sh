@@ -2537,12 +2537,35 @@ fm_backend_herdr_current_path() {  # <target>
     | jq -r '.result.pane.foreground_cwd // empty' 2>/dev/null
 }
 
+# fm_backend_herdr_wait_pane_shell_reading: block until a pane's shell is
+# reading its pty, bounded by FM_BACKEND_HERDR_PANE_READY_POLLS.
+# A create response returns a complete pane id before that shell reaches its
+# first prompt, and input typed into that gap is silently discarded;
+# docs/herdr-backend.md "Pane input readiness" owns the behavior, the evidence,
+# and why the live screen is the signal. Returns non-zero when the bound
+# elapses with the screen still blank, which the caller treats as "send anyway".
+fm_backend_herdr_wait_pane_shell_reading() {  # <session> <pane>
+  local session=$1 pane=$2 attempt=0 max_attempts out
+  max_attempts=${FM_BACKEND_HERDR_PANE_READY_POLLS:-60}
+  while [ "$attempt" -lt "$max_attempts" ]; do
+    out=$(fm_backend_herdr_cli "$session" pane read "$pane" --source visible --lines 200 2>/dev/null) || out=""
+    [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ] || return 0
+    attempt=$((attempt + 1))
+    [ "$attempt" -ge "$max_attempts" ] || sleep 0.5
+  done
+  return 1
+}
+
 # fm_backend_herdr_send_text_line: send one line of TEXT then submit,
 # ATOMICALLY - mirrors tmux's `send-keys -t T text Enter`. Used for the fixed
 # spawn-time commands (treehouse get, the GOTMPDIR export). `pane run` types
-# the command and submits it in one call (verified).
+# the command and submits it in one call (verified). These are the first input
+# a freshly created pane ever receives, so this is where the startup race above
+# is waited out.
 fm_backend_herdr_send_text_line() {  # <target> <text>
   fm_backend_herdr_target_ready "$1" || return 1
+  fm_backend_herdr_wait_pane_shell_reading "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
+    || echo "warning: herdr pane $FM_BACKEND_HERDR_PANE rendered nothing before its first command; sending anyway" >&2
   fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane run "$FM_BACKEND_HERDR_PANE" "$2" >/dev/null 2>&1
 }
 
