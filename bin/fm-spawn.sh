@@ -2017,7 +2017,10 @@ freshen_spawn_worktree_base() {  # <worktree>
     fi
     return 1
   fi
-  if ! git -C "$worktree" reset --hard "$target" >/dev/null; then
+  # submodule.recurse is pinned off so an operator's ambient git config cannot
+  # change what a refresh touches: the base moves, the slot's submodules do not,
+  # and the stale-pin gate above stays the single owner of that verdict.
+  if ! git -C "$worktree" -c submodule.recurse=false reset --hard "$target" >/dev/null; then
     echo "error: could not reset pooled worktree '$worktree' to '$target'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
