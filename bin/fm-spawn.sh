@@ -2503,20 +2503,11 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # active client's window, which would misread firstmate's OWN pane path as the
   # worktree and tangle a hook into the primary checkout. The window id never lies.
   # "Not the project directory" is NOT evidence that the pane entered its
-  # worktree, so the poll asks spawn_path_is_isolated_worktree instead. A
-  # backend can report a real-looking path that is no worktree at all: herdr's
-  # `pane get` answers `.foreground_cwd` from the pty's foreground process
-  # GROUP, and while treehouse hands the terminal over to its worktree subshell
-  # that group briefly holds treehouse, its git child, and the new shell at
-  # once; herdr resolves that to none of them and returns the operator's home
-  # directory for about a second (tmux's pane_current_path tracks the pane's own
-  # shell and has no such fallback). Accepting $HOME as the worktree turned a
-  # transient into a fatal launch refusal that blamed treehouse get. Anything
-  # that is not yet an isolated worktree is simply not settled, so the poll
-  # keeps waiting and the existing 60s timeout owns a genuinely stuck acquire.
-  # The predicate compares against PROJ_ABS_REAL (physical), not PROJ_ABS: a
-  # symlinked project prefix would otherwise make the pane's OS-level cwd read
-  # differ from PROJ_ABS before the pane has actually moved.
+  # worktree, so the poll asks spawn_path_is_isolated_worktree instead: a
+  # backend can report a real-looking path that is no worktree at all, and
+  # docs/herdr-backend.md "Working directory" owns when a Herdr pane read does
+  # exactly that. Anything not yet an isolated worktree is simply not settled,
+  # so the poll keeps waiting and the timeout below owns a stuck acquire.
   #
   # Qualifying once is still not proof: on some tmux/WSL setups a brand-new
   # window's pane_current_path transiently reports an unrelated stale path (seen

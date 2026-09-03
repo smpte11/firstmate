@@ -185,6 +185,26 @@ A prior label heuristic could adopt a captain-owned workspace named `firstmate` 
 The current structural gate removes label inference from cleanup authority.
 `tests/fm-backend-herdr-prune-safety-e2e.test.sh` reproduces the collision in an isolated named session and proves the adopted pane remains untouched.
 
+## Working directory
+
+Firstmate passes `--cwd <project>` on both `herdr workspace create` and `herdr tab create`, so a task pane starts in the project directory.
+
+Herdr accepts only an existing absolute directory there.
+It silently substitutes the operator's home directory for anything else - a missing path, a file, a relative path, or an unexpanded `~` - and still returns a success response with complete workspace, tab, and pane ids.
+A pane placed in the home directory is therefore indistinguishable from a successful placement by the create response alone.
+
+A pane reports two different working directories, and they answer different questions.
+`.result.pane.cwd` is the directory the pane was created in and never changes afterwards, so it cannot show that a shell has moved.
+`.result.pane.foreground_cwd` is resolved from the pty's foreground process group, which is what changes when `treehouse get` enters its worktree subshell.
+
+`foreground_cwd` is not reliable at every instant.
+While one command hands the terminal to another, the foreground group can briefly hold several processes at once, and Herdr resolves that to the operator's home directory rather than to any of them.
+Observed during `treehouse get`'s handover to its worktree subshell: the pane's whole process tree sits in the project directory while `foreground_cwd` reads the home directory for roughly a second.
+tmux's `pane_current_path` tracks the pane's own shell and has no such fallback, so this transient is specific to reading a Herdr pane.
+
+Never treat a pane path as a worktree because it merely differs from the project directory.
+`bin/fm-spawn.sh`'s `spawn_path_is_isolated_worktree` owns that test, and its worktree-detection poll waits until a path actually is an isolated worktree on two consecutive reads.
+
 ## Endpoint metadata
 
 ```text
