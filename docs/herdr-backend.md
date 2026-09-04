@@ -27,6 +27,7 @@ A tmux pane nested inside Herdr resolves to tmux because the innermost multiplex
 An auto-detected Herdr spawn prints an opt-out notice.
 
 Spawn stops before creating a Herdr container or acquiring a task worktree when `herdr`, `jq`, or the protocol floor is unavailable.
+Your login shell does not have to be POSIX: firstmate establishes a POSIX shell in each task pane before typing anything into it, per the pane-shell contract in [`architecture.md`](architecture.md#runtime-session-backends).
 No separate first-run provisioning is required.
 
 The required CI lane uses the pinned installers in `bin/fm-install-herdr.sh` and `bin/fm-install-treehouse.sh`.

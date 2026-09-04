@@ -18,6 +18,7 @@
 make_fake_tmux() {
   local dir=$1 fakebin capture
   fakebin=$(fm_fakebin "$dir")
+  fm_fake_pane_bridge "$fakebin"
   capture="$dir/pane.txt"
   # A real, positively identified empty agent composer. A blank capture is
   # deliberately unknown under the fleet-wide strict blank-row posture.
@@ -26,8 +27,13 @@ make_fake_tmux() {
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  has-session|new-session|new-window|kill-window)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    exit 0
+    ;;
+  send-keys)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    fm-fake-pane-bridge "$@"
     exit 0
     ;;
   list-windows)

@@ -203,6 +203,30 @@
 # and every refusal; a failed registration stops this spawn rather than launching
 # a worker that would wedge on the dialog. A --secondmate launch never runs it,
 # so a claude secondmate home keeps its own one-time trust decision.
+# Every line this script types into a task pane is POSIX shell source, while the
+# pane runs the operator's LOGIN shell, which firstmate never chose. A non-POSIX
+# login shell (nushell rejects `export`, supports neither the `VAR=value cmd`
+# prefix nor `$(...)`; fish differs comparably) therefore used to hand the worker
+# the uninterpolated launch text as its own prompt while this spawn still printed
+# success. Every spawn now normalizes the pane onto a POSIX shell first: it types
+# a flagless, double-quoted `exec "<shell>" "<script>"` bridge, the one form that
+# means the same thing in sh, bash, zsh, fish, and nushell alike, and proves the
+# replacement ran it by reading a nonce marker that bridge script writes, never
+# rendered pane text. Both files are transient (state/.<id>.pane-shell and
+# state/.<id>.pane-shell.sh) and removed once the attempt resolves. An unproven
+# or contradicted pane shell REFUSES the spawn naming the endpoint, the shell
+# found, and the shell required, rather than typing source it cannot execute.
+# The bridge is typed before `treehouse get`, so an undrivable pane costs no
+# worktree lease, and again before the launch source, because treehouse opens its
+# worktree subshell from the operator's own shell; exec preserves the pane's pid
+# and cwd, so the worktree assertions and the treehouse lease are untouched.
+# The shell is the first executable absolute path among /bin/sh, /bin/bash,
+# /usr/bin/sh, /usr/bin/bash, and /bin/dash; FM_PANE_SHELL overrides that search
+# with an executable absolute path of its own and refuses rather than falling
+# back. $SHELL is deliberately neither read nor written, so the worker agent's
+# own tool shell keeps resolving exactly as it does without firstmate.
+# FM_PANE_SHELL_POLLS and FM_PANE_SHELL_POLL_INTERVAL bound the proof wait,
+# which costs no sleep at all when the pane answers the bridge immediately.
 # Publishing the record and moving this home's backlog item to In flight are one
 # step, not two: bin/fm-backlog-transition-lib.sh owns that invariant, and this
 # script performs the transition under the task's own meta lock before it reports
@@ -2471,6 +2495,127 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 
+# The pane-shell contract: every line typed into a task pane below is POSIX
+# shell source, while the pane runs the operator's login shell. This script's
+# header owns the contract, the bridge form, the resolution order, and the
+# refusal; these three helpers implement it.
+SPAWN_PANE_SHELL_CANDIDATES='/bin/sh /bin/bash /usr/bin/sh /usr/bin/bash /bin/dash'
+
+# spawn_resolve_pane_shell: the absolute path of the POSIX shell this pane
+# should run. FM_PANE_SHELL overrides the search and must itself be an
+# executable absolute path, so a bad override refuses rather than falling back
+# to a shell the operator did not ask for.
+spawn_resolve_pane_shell() {
+  local cand
+  if [ -n "${FM_PANE_SHELL:-}" ]; then
+    case "$FM_PANE_SHELL" in
+      /*) [ -x "$FM_PANE_SHELL" ] || return 1 ;;
+      *) return 1 ;;
+    esac
+    printf '%s' "$FM_PANE_SHELL"
+    return 0
+  fi
+  for cand in $SPAWN_PANE_SHELL_CANDIDATES; do
+    [ -x "$cand" ] || continue
+    printf '%s' "$cand"
+    return 0
+  done
+  return 1
+}
+
+# spawn_pane_shell_hint: the pane's last rendered non-empty line, bounded, for
+# a refusal diagnostic only. Best-effort: it names what a human would see (the
+# original incident showed nushell's own parse error there) and never carries a
+# verdict.
+spawn_pane_shell_hint() {  # <target>
+  local cap
+  cap=$(fm_backend_capture "$BACKEND" "$1" 20 "$W" 2>/dev/null) || return 0
+  printf '%s' "$cap" | tr -d '\r' \
+    | awk 'NF { last = $0 } END { if (last != "") print substr(last, 1, 160) }'
+}
+
+# spawn_ensure_posix_pane_shell: replace <target>'s shell with a POSIX one and
+# prove it before the caller types shell source into it. The proof is the nonce
+# marker the bridge script writes, never rendered pane text, so only a shell
+# that actually ran the script can satisfy it. Which shell that is follows from
+# the bridge line naming it; the kernel-reported process name recorded beside
+# the nonce is the second, independent signal, which names the shell in a
+# refusal and refuses a name that is neither the required shell nor a
+# recognized POSIX one. It cannot veto alone, because a `/bin/sh` that reports
+# as dash, ash, or bash already proved itself by running this very script.
+spawn_ensure_posix_pane_shell() {  # <target>
+  local target=$1 shell marker script nonce bridge polls interval i proof found status hint path
+  if ! shell=$(spawn_resolve_pane_shell); then
+    echo "error: task $ID's endpoint $target cannot be given a POSIX shell: none of ${FM_PANE_SHELL:-$SPAWN_PANE_SHELL_CANDIDATES} is an executable absolute path; refusing to type shell source into a pane whose shell firstmate cannot establish" >&2
+    return 1
+  fi
+  marker="$STATE/.$ID.pane-shell"
+  script="$STATE/.$ID.pane-shell.sh"
+  for path in "$shell" "$script"; do
+    case "$path" in
+      *'"'*|*'$'*|*\\*|*'`'*)
+        echo "error: task $ID's endpoint $target cannot be normalized onto a POSIX shell: '$path' contains a character whose meaning differs between shells, so no bridge line firstmate can type is safe in the pane's own shell" >&2
+        return 1
+        ;;
+    esac
+  done
+  nonce="p${BASHPID:-$$}.$RANDOM.$RANDOM"
+  rm -f "$marker" "$script" 2>/dev/null || true
+  {
+    printf "printf '%%s\\\\n' %s > %s\n" "$(shell_quote "$nonce")" "$(shell_quote "$marker.new")"
+    printf "ps -p \$\$ -o comm= >> %s 2>/dev/null || true\n" "$(shell_quote "$marker.new")"
+    printf 'mv -f %s %s\n' "$(shell_quote "$marker.new")" "$(shell_quote "$marker")"
+    printf 'exec %s -i\n' "$(shell_quote "$shell")"
+  } > "$script" || {
+    echo "error: task $ID's endpoint $target could not be normalized onto POSIX shell $shell: the bridge script could not be written to $script" >&2
+    return 1
+  }
+  bridge="exec \"$shell\" \"$script\""
+  polls=${FM_PANE_SHELL_POLLS:-90}
+  interval=${FM_PANE_SHELL_POLL_INTERVAL:-0.1}
+  case "$polls" in ''|*[!0-9]*) polls=90 ;; esac
+  [ "$polls" -gt 0 ] || polls=1
+  proof=
+  found=
+  i=0
+  while :; do
+    # Retyped periodically rather than once: a pane whose shell is not reading
+    # input yet drops the line instead of queueing it, and re-execing an
+    # already-normalized shell is harmless. The marker is read before the first
+    # wait so a pane that answers at once costs no sleep at all.
+    [ $((i % 10)) -ne 0 ] || spawn_send_text_line "$target" "$bridge" || true
+    if [ -r "$marker" ]; then
+      proof=$(head -n 1 "$marker" 2>/dev/null || true)
+      if [ "$proof" = "$nonce" ]; then
+        found=$(sed -n '2p' "$marker" 2>/dev/null | tr -d '[:space:]')
+        break
+      fi
+      proof=
+    fi
+    i=$((i + 1))
+    [ "$i" -lt "$polls" ] || break
+    sleep "$interval" || true
+  done
+  status=0
+  if [ "$proof" != "$nonce" ]; then
+    hint=$(spawn_pane_shell_hint "$target")
+    echo "error: task $ID's endpoint $target could not be normalized onto POSIX shell $shell: nothing there ran the POSIX bridge, so what its own shell does with shell source is unproven; refusing to type any into it${hint:+ (the pane last showed: $hint)}" >&2
+    status=1
+  else
+    found=${found#-}
+    found=${found##*/}
+    case "$found" in
+      ''|sh|bash|dash|ash|ksh|mksh|zsh|"${shell##*/}") ;;
+      *)
+        echo "error: task $ID's endpoint $target is running '$found', not the required POSIX shell '$shell'; refusing to type shell source into it" >&2
+        status=1
+        ;;
+    esac
+  fi
+  rm -f "$marker" "$marker.new" "$script" 2>/dev/null || true
+  return "$status"
+}
+
 kimi_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
@@ -2547,6 +2692,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  # Ahead of the worktree acquisition so a pane firstmate cannot drive costs no
+  # treehouse lease, and because treehouse opens its worktree subshell from
+  # whatever shell reads this line.
+  spawn_ensure_posix_pane_shell "$WT_TARGET" || exit 1
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
@@ -3227,6 +3376,12 @@ spawn_record_traceparent() {
   return "$status"
 }
 
+# The pane's shell changed since the normalization above: `treehouse get` opened
+# its worktree subshell from the operator's own shell, and a secondmate, orca, or
+# relaunch spawn never passed that normalization at all. Establish a proven POSIX
+# shell here, at the one point every kind, backend, and harness reaches before
+# any of the launch source below is typed.
+spawn_ensure_posix_pane_shell "$T" || exit 1
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.

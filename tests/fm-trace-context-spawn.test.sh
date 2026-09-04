@@ -70,25 +70,27 @@ case "${1:-}" in
     # (`send-keys -t <target> -l <text>`) and a text line
     # (`send-keys -t <target> <text> Enter`). Skip the flags, the target, and
     # the trailing key so only the payload is logged, one per line, in order.
-    if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
-      shift
-      skip_next=
-      for a in "$@"; do
-        if [ -n "$skip_next" ]; then skip_next=; continue; fi
-        case "$a" in
-          -t) skip_next=1; continue ;;
-          -l) continue ;;
-          Enter|C-m) continue ;;
-          *) printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
-        esac
-      done
-    fi
+    # The pane-shell bridge is answered rather than logged: it is what makes a
+    # POSIX pane shell available for the payloads, not one of them.
+    shift
+    skip_next=
+    for a in "$@"; do
+      if [ -n "$skip_next" ]; then skip_next=; continue; fi
+      case "$a" in
+        -t) skip_next=1; continue ;;
+        -l) continue ;;
+        Enter|C-m) continue ;;
+        'exec "'*) fm-fake-pane-bridge "$a" ;;
+        *) [ -z "${FM_FAKE_LAUNCH_LOG:-}" ] || printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
+      esac
+    done
     exit 0
     ;;
 esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_pane_bridge "$fakebin"
   fm_fake_exit0 "$fakebin" treehouse
   printf '%s\n' "$fakebin"
 }

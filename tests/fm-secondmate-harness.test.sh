@@ -421,8 +421,10 @@ test_propagate_lib() {
 make_noop_tmux() {
   local dir=$1 fakebin="$1/fakebin"
   mkdir -p "$fakebin"
+  fm_fake_pane_bridge "$fakebin"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
+case "${1:-}" in send-keys) fm-fake-pane-bridge "$@" ;; esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
@@ -654,12 +656,14 @@ case "${1:-}" in
         prev=$a
       done
     fi
+    fm-fake-pane-bridge "$@"
     exit 0
     ;;
 esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_pane_bridge "$fakebin"
   fm_fake_exit0 "$fakebin" pi
   printf '%s\n' "$fakebin"
 }
@@ -1046,6 +1050,7 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
+  fm_fake_pane_bridge "$fakebin"
   fm_fake_exit0 "$fakebin" node chrome-devtools-axi
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
   cat > "$fakebin/gh-axi" <<'SH'
@@ -1075,6 +1080,7 @@ case "$*" in
     ;;
   *send-keys*)
     [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
+    fm-fake-pane-bridge "$@"
     exit 0
     ;;
 esac

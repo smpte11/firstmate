@@ -73,10 +73,14 @@ EOF
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
-case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+  send-keys) fm-fake-pane-bridge "$@"; exit 0 ;;
+esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_pane_bridge "$fakebin"
   fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
 
   fm_git_init_commit "$case_dir/project"
@@ -246,7 +250,15 @@ break_launch_delivery() {  # <case-dir>
 case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  send-keys) exit 1 ;;
+  send-keys)
+    # The pane-shell bridge still has to be answered: this fake breaks the
+    # DELIVERY sends, and a pane that cannot even be given a POSIX shell would
+    # abort the spawn earlier, before the delivery path under test.
+    case "$*" in
+      *'exec "'*) fm-fake-pane-bridge "$@"; exit 0 ;;
+    esac
+    exit 1
+    ;;
 esac
 exit 0
 SH

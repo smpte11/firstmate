@@ -30,6 +30,39 @@ zsh
 A persistent parent shell waiting for a child remained reported as the parent process, while a shell that directly execed a simple command changed identity with the process itself.
 Pi and pi-signed 0.82.0 were reverified on 2026-07-27 through real isolated `fm-spawn.sh` launches.
 
+### Pane-shell normalization
+
+The pane-shell contract in [`../architecture.md`](../architecture.md#runtime-session-backends) was verified on 2026-09-04 with tmux 3.6b and nushell 0.113.1 on macOS, against a real pane whose shell is nushell.
+
+```sh
+tmux -L fmposix new-session -d -s posixtest -c "$dir" "$(command -v nu)"
+tmux -L fmposix send-keys -t posixtest "export GOTMPDIR=$dir/gotmp" Enter
+tmux -L fmposix send-keys -t posixtest "exec \"/bin/sh\" \"$dir/bridge.sh\"" Enter
+cat "$dir/marker"
+tmux -L fmposix send-keys -t posixtest "export GOTMPDIR=$dir/gotmp" Enter
+tmux -L fmposix send-keys -t posixtest 'FOO=bar env printf "[%s]\n" "$(printf substituted)"' Enter
+tmux -L fmposix display-message -p -t posixtest '#{pane_current_path}'
+tmux -L fmposix display-message -p -t posixtest '#{pane_current_command}'
+```
+
+Observed output, in order:
+
+```text
+Error: nu::parser::unexpected_keyword
+  x Unexpected keyword.
+   `-- unexpected export
+  help: 'export' keyword is allowed only in a module.
+nonce-live-1
+/bin/sh
+[substituted]
+<dir>
+bash
+```
+
+The bridge line ran under nushell and the marker proved the replacement shell, after which `export`, the `VAR=value cmd` prefix, and `$(...)` substitution all behaved.
+The pane's working directory survived the exec, and `#{pane_current_command}` stayed inside the liveness classifier's shell vocabulary (`bash`, because macOS `/bin/sh` is bash in sh mode; a Linux `/bin/sh` reports `sh` or `dash`, both also in that vocabulary).
+`tests/fm-spawn-pane-shell.test.sh` is the portable regression that pins the refusal and the executed-source halves without a real non-POSIX shell.
+
 ### Agent liveness name sources
 
 The earlier record that every harness is observed under its own `#{pane_current_command}` no longer holds and has been replaced by the per-harness evidence below.

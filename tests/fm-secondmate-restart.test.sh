@@ -44,6 +44,7 @@ trap 'rm -rf -- "$TMP_ROOT"' EXIT
 make_stub() {  # <case-dir>
   local fb="$1/fakebin"
   mkdir -p "$fb"
+  fm_fake_pane_bridge "$fb"
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -92,6 +93,7 @@ case "${1:-}" in
       esac
     else
       printf '%s\n' "$payload" >> "$D/keys"
+      fm-fake-pane-bridge "$payload"
     fi
     exit 0 ;;
   display-message)

@@ -102,6 +102,7 @@ fm_test_fake_gh_axi() {
 # suites that do not set FM_FAKE_LAUNCH_LOG keep a silent send-keys.
 fm_test_fake_tmux_spawn() {
   local fakebin=$1
+  fm_fake_pane_bridge "$fakebin"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -127,6 +128,7 @@ case "${1:-}" in
         prev=$a
       done
     fi
+    fm-fake-pane-bridge "$@"
     exit 0
     ;;
 esac

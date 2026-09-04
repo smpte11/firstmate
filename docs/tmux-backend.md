@@ -13,6 +13,7 @@ Select it explicitly with local `config/backend` containing `tmux`, with `FM_BAC
 An explicit selection is also the opt-out from Herdr or cmux runtime auto-detection.
 
 No provisioning is required before the first task.
+Your login shell does not have to be POSIX: firstmate establishes a POSIX shell in each task pane before typing anything into it, per the pane-shell contract in [`architecture.md`](architecture.md#runtime-session-backends).
 
 ## Watching the crew
 
@@ -102,6 +103,7 @@ Without that baseline, an `unknown` verdict is preserved untouched, so a busy-lo
 
 ```sh
 tests/fm-backend-tmux-smoke.test.sh
+tests/fm-spawn-pane-shell.test.sh
 tests/fm-tmux-agent-liveness.test.sh
 tests/fm-harness-liveness-drift-live-e2e.test.sh
 tests/fm-composer-ghost.test.sh

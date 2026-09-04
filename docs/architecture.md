@@ -178,6 +178,12 @@ It owns task endpoint creation, bounded capture, text/key sends, current-path re
 Runtime auto-detection is innermost-first: `$TMUX` wins over `HERDR_ENV=1`, which wins over cmux's primary `CMUX_WORKSPACE_ID` marker and documented fallback signals; auto-detected herdr or cmux prints a one-time opt-out notice, auto-detected tmux stays silent, and zellij and orca are never auto-detected (only explicit selection).
 Unknown backend names fail loudly.
 For compatibility, default tmux tasks do not write `backend=tmux`; every reader treats a missing `backend=` field as `tmux`.
+Every backend carries the same pane-shell contract, because firstmate types POSIX shell source into a task pane: it establishes a POSIX shell in that pane before typing any.
+The pane otherwise runs the operator's login shell, which firstmate never chose, and a non-POSIX one such as nushell or fish silently handed the worker the uninterpolated launch text as its own prompt instead of its instructions.
+`bin/fm-spawn.sh` owns that normalization for every backend, kind, and harness at the one seam where launch source is typed: it sends a bridge line valid in every shell it might land in, proves the replacement shell ran it through a marker rather than through rendered pane text, and refuses the spawn when that proof is missing or contradicted rather than reporting a worker that never received its brief.
+Its header owns the exact bridge, the shell resolution order, the refusal mechanics, and the second normalization the treehouse-provided backends need because `treehouse get` opens its worktree subshell from the operator's own shell; `tests/fm-spawn-pane-shell.test.sh` owns the portable regression coverage.
+The worker agent's own tool shell is outside that contract: each harness resolves it independently of the pane, and firstmate neither reads nor writes `$SHELL`.
+
 `fm-watch.sh` decides each window's busy state through the semantic contract above rather than by polling the backend for rendered text.
 Herdr's native `agent.get` verdict still participates, but only as evidence of activity: a native `busy` is accepted when the task has no record of its own, while a native `idle` is not, because `agent.get` reports generation state and reads idle while a worker blocks on its own long-running foreground tool call.
 tmux, zellij, orca, and cmux expose no native busy primitive at all, so a task on those backends is classified purely from its adapter's own lifecycle record.

@@ -49,11 +49,12 @@ case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
-  send-keys) exit 0 ;;
+  send-keys) fm-fake-pane-bridge "$@"; exit 0 ;;
 esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_pane_bridge "$fakebin"
   fm_fake_exit0 "$fakebin" treehouse
   printf '%s\n' "$fakebin"
 }

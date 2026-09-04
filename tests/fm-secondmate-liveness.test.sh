@@ -301,10 +301,12 @@ case "${1:-}" in
     exit 0
     ;;
   has-session) exit 0 ;;
+  send-keys) fm-fake-pane-bridge "$@"; exit 0 ;;
 esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_pane_bridge "$fakebin"
   printf '%s\n' "$fakebin"
 }
 

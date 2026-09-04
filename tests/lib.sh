@@ -160,7 +160,9 @@ fi
 #
 # fm_fakebin <dir> creates <dir>/fakebin and echoes it; prepend it to PATH to
 # shadow real tools with stubs. fm_fake_exit0 drops trivial exit-0 stubs for the
-# named tools into a fakebin dir. fm_fake_crash_injector drops the shim a fake
+# named tools into a fakebin dir. fm_fake_pane_bridge drops the shim a fake
+# backend uses to model the pane's shell answering fm-spawn's POSIX bridge.
+# fm_fake_crash_injector drops the shim a fake
 # uses to crash the process under test deterministically. fm_fake_version_tool
 # drops a stub for a tool whose installed version bootstrap gates, so a fixture
 # cannot be reported as an unparseable build simply for answering `--version`
@@ -182,6 +184,29 @@ exit 0
 SH
     chmod +x "$fakebin/$tool"
   done
+}
+
+# fm_fake_pane_bridge <dir>
+# Drops `fm-fake-pane-bridge` into any PATH directory a fixture owns (usually a
+# fakebin), the one place a fake backend models the pane's
+# shell answering fm-spawn's POSIX bridge line. A real pane runs
+# `exec "<shell>" "<script>"` and the bridge script writes the proof marker
+# fm-spawn waits for, so a fake whose send is a bare exit-0 would make every
+# spawn refuse for want of a POSIX pane shell. Hand it a send's whole argv;
+# anything that is not the bridge is ignored.
+fm_fake_pane_bridge() {
+  local fakebin=$1
+  cat > "$fakebin/fm-fake-pane-bridge" <<'SH'
+#!/usr/bin/env bash
+set -u
+for a in "$@"; do
+  if [[ $a =~ ^exec\ \"([^\"]+)\"\ \"([^\"]+)\"$ ]]; then
+    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" < /dev/null > /dev/null 2>&1 || true
+  fi
+done
+exit 0
+SH
+  chmod +x "$fakebin/fm-fake-pane-bridge"
 }
 
 # fm_fake_crash_injector <fakebin>

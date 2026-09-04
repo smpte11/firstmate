@@ -25,10 +25,13 @@
 # Every invocation is appended verbatim to <log-file>, so a test reads back what
 # the remote pane received. Creating <send-fail-flag> makes every pane write
 # fail, which is how a test simulates an endpoint that cannot be reached.
+# `pane run` also answers fm-spawn's pane-shell bridge, since that is what a
+# real remote pane's shell does with it (tests/lib.sh's fm_fake_pane_bridge).
 
 install_remote_herdr_fixture() { # <remote-root> <state> <log> <send-fail> <socket>
   local remote_root=$1 state=$2 log=$3 send_fail=$4 socket=$5 script="$1/bin/herdr"
   mkdir -p "$remote_root/bin"
+  fm_fake_pane_bridge "$remote_root/bin"
   cat > "$script" <<SH
 #!/usr/bin/env bash
 set -u
@@ -90,6 +93,10 @@ case "${1:-} ${2:-}" in
       '.tabs |= [.[]|select(.pane_id != $p)]
        | .typed |= with_entries(select(.key != $p))
        | .working |= with_entries(select(.key != $p))' | save ;;
+  "pane run")
+    [ ! -f "$SEND_FAIL" ] || exit 1
+    fm-fake-pane-bridge "${4:-}"
+    jq_state --arg p "${3:-}" '.typed[$p] = true' | save ;;
   "pane send-text")
     [ ! -f "$SEND_FAIL" ] || exit 1
     jq_state --arg p "${3:-}" '.typed[$p] = true' | save ;;

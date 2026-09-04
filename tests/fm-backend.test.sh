@@ -803,10 +803,12 @@ case "\${1:-}" in
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
   list-windows) exit 0 ;;
+  send-keys) fm-fake-pane-bridge "\$@"; exit 0 ;;
 esac
 exit 0
 SH
   chmod +x "$fb/tmux"
+  fm_fake_pane_bridge "$fb"
   fm_fake_exit0 "$fb" treehouse
   printf '%s\n' "$fb"
 }
@@ -873,10 +875,12 @@ case "\${1:-}" in
     ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
   list-windows) exit 0 ;;
+  send-keys) fm-fake-pane-bridge "\$@"; exit 0 ;;
 esac
 exit 0
 SH
   chmod +x "$fb/tmux"
+  fm_fake_pane_bridge "$fb"
   fm_fake_exit0 "$fb" treehouse
   printf '%s\n' "$fb"
 }
