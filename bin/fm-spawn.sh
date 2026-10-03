@@ -1184,6 +1184,11 @@ BACKEND=
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+JUJUTSU_ABORT_CLEANUP=0
+JUJUTSU_WORKSPACE_ID=
+JUJUTSU_WORKSPACE_NAME=
+JUJUTSU_WORKSPACE_PATH=
+JUJUTSU_SESSION_BACKEND=
 HERDR_PROJECTION_ABORT_CLEANUP=0
 HERDR_PROJECTION_ABORT_SESSION=
 HERDR_PROJECTION_ABORT_TASK_PANE=
@@ -1324,6 +1329,15 @@ spawn_abort_cleanup() {
             fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE" ||
             true
         fi
+      fi
+    fi
+  fi
+  if [ "$JUJUTSU_ABORT_CLEANUP" = 1 ]; then
+    JUJUTSU_ABORT_CLEANUP=0
+    # Clean up jujutsu workspace
+    if [ -n "${JUJUTSU_WORKSPACE_NAME:-}" ] && [ -n "${PROJ_ABS:-}" ]; then
+      if ! fm_backend_remove_worktree jujutsu "$JUJUTSU_WORKSPACE_NAME" "$PROJ_ABS" 2>/dev/null; then
+        echo "warning: could not clean up jujutsu workspace $JUJUTSU_WORKSPACE_NAME" >&2
       fi
     fi
   fi
@@ -1661,6 +1675,10 @@ if [ "$RELAUNCH" -eq 0 ]; then
   fm_backend_source "$BACKEND" || exit 1
   if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
     echo "error: backend=orca does not support --secondmate spawns yet" >&2
+    exit 1
+  fi
+  if [ "$BACKEND" = jujutsu ] && [ "$KIND" = secondmate ]; then
+    echo "error: backend=jujutsu does not support --secondmate spawns yet" >&2
     exit 1
   fi
   if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
@@ -3838,6 +3856,61 @@ EOF
     fi
     T="$ORCA_TERMINAL"
     ;;
+  jujutsu)
+    # Jujutsu backend: create a jj workspace for the task
+    # Unlike orca, jujutsu workspaces don't manage terminals - we need a session backend
+    # But for now, we'll create the workspace and use the default session backend
+    JUJUTSU_WT_RAW=$(fm_backend_jujutsu_workspace_create "$PROJ_ABS" "$W") || exit 1
+    JUJUTSU_WORKSPACE_NAME=${JUJUTSU_WT_RAW%%$'\t'*}
+    JUJUTSU_WORKSPACE_PATH=${JUJUTSU_WT_RAW#*$'\t'}
+    JUJUTSU_WORKSPACE_PATH=${JUJUTSU_WORKSPACE_PATH%%$'\t'*}
+    
+    if [ -z "$JUJUTSU_WORKSPACE_NAME" ] || [ -z "$JUJUTSU_WORKSPACE_PATH" ]; then
+      echo "error: jujutsu did not return a workspace name/path for $W" >&2
+      exit 1
+    fi
+    
+    # Validate that we have a valid worktree
+    validate_spawn_worktree "jujutsu workspace create" "$JUJUTSU_WORKSPACE_PATH"
+    
+    # For jujutsu, we still need a session backend to manage the terminal
+    # Use the default backend for the session, but track the jujutsu workspace
+    # We'll fall through to the session backend creation below
+    WT="$JUJUTSU_WORKSPACE_PATH"
+    JUJUTSU_WORKSPACE_ID="$JUJUTSU_WORKSPACE_NAME"
+    
+    # Note: jujutsu doesn't create terminals, so we need to use a session backend
+    # For now, we'll use tmux as the default session backend for jujutsu worktrees
+    if [ -z "${JUJUTSU_SESSION_BACKEND:-}" ]; then
+      JUJUTSU_SESSION_BACKEND=tmux
+    fi
+    
+    # Create a session using the session backend
+    case "$JUJUTSU_SESSION_BACKEND" in
+      tmux)
+        JUJUTSU_SES=$(fm_backend_tmux_container_ensure) || exit 1
+        JUJUTSU_WID=$(fm_backend_tmux_create_task "$JUJUTSU_SES" "$W" "$JUJUTSU_WORKSPACE_PATH") || exit 1
+        T="$JUJUTSU_SES:$JUJUTSU_WID"
+        WT_TARGET="$JUJUTSU_WID"
+        ;;
+      herdr)
+        JUJUTSU_SES=$(fm_backend_herdr_session) || exit 1
+        JUJUTSU_TASK_IDS=$(fm_backend_herdr_create_task "$JUJUTSU_SES" "$W" "$JUJUTSU_WORKSPACE_PATH") || exit 1
+        read -r JUJUTSU_TAB_ID JUJUTSU_PANE_ID <<EOF
+$JUJUTSU_TASK_IDS
+EOF
+        if [ -z "$JUJUTSU_TAB_ID" ] || [ -z "$JUJUTSU_PANE_ID" ]; then
+          echo "error: herdr did not return a tab/pane id for jujutsu workspace $W" >&2
+          exit 1
+        fi
+        T="$JUJUTSU_SES:$JUJUTSU_PANE_ID"
+        ;;
+      *)
+        echo "error: unsupported session backend '$JUJUTSU_SESSION_BACKEND' for jujutsu worktrees" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   esac
 fi
 if [ "$KIND" = secondmate ]; then
@@ -4938,6 +5011,11 @@ preserve_relaunch_meta() {
   if [ "$BACKEND" = cmux ]; then
     echo "cmux_workspace_id=$CMUX_WORKSPACE_ID"
     echo "cmux_surface_id=$CMUX_SURFACE_ID"
+  fi
+  if [ "$BACKEND" = jujutsu ]; then
+    echo "jujutsu_workspace_name=$JUJUTSU_WORKSPACE_NAME"
+    echo "jujutsu_workspace_path=$JUJUTSU_WORKSPACE_PATH"
+    [ -z "${JUJUTSU_SESSION_BACKEND:-}" ] || echo "jujutsu_session_backend=$JUJUTSU_SESSION_BACKEND"
   fi
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"

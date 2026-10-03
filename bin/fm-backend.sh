@@ -66,9 +66,11 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # spawn-capable; unlike tmux/herdr/zellij it is also the worktree provider.
 # cmux is EXPERIMENTAL and spawn-capable, session-provider-only like
 # herdr/zellij - verified against the real 0.64.17 binary (docs/cmux-backend.md).
+# jujutsu is EXPERIMENTAL and spawn-capable; it owns the task worktree via
+# jj workspaces and delegates terminal management to a session backend.
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
-FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
-FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
+FM_BACKEND_KNOWN="tmux herdr zellij orca cmux jujutsu"
+FM_BACKEND_SPAWN="tmux herdr zellij orca cmux jujutsu"
 
 # fm_backend_list_contains: whitespace-delimited membership without relying on
 # shell word splitting. fm-backend.sh is normally sourced by bash scripts, but
@@ -302,7 +304,9 @@ fm_backend_validate_spawn() {  # <name>
 #     tool check, e.g. fm_backend_herdr_tool_check);
 #   - the treehouse worktree provider for every session-provider-only backend
 #     (tmux, herdr, zellij, cmux); orca owns its own task worktree and terminal,
-#     so it drops both treehouse and any other backend's session CLI.
+#     so it drops both treehouse and any other backend's session CLI;
+#     jujutsu owns its worktree via jj workspaces and delegates to a session
+#     backend for terminals, so it only requires jj itself.
 # Prints a single space-separated line and returns 0 for a known backend; returns
 # 1 and prints nothing for an unknown backend.
 fm_backend_required_tools() {  # <backend>
@@ -312,6 +316,7 @@ fm_backend_required_tools() {  # <backend>
     zellij) printf '%s' 'zellij jq treehouse' ;;
     cmux)   printf '%s' 'cmux jq treehouse' ;;
     orca)   printf '%s' 'orca' ;;
+    jujutsu) printf '%s' 'jj' ;;
     *) return 1 ;;
   esac
 }
@@ -643,6 +648,9 @@ fm_backend_source() {  # <name>
     cmux)
       set -- fm-backend-hometag-lib.sh fm-composer-lib.sh
       ;;
+    jujutsu)
+      set -- fm-composer-lib.sh
+      ;;
     *)
       return 1
       ;;
@@ -686,6 +694,13 @@ fm_backend_source() {  # <name>
         # shellcheck source=/dev/null
         . "$adapter" || return 1
         _FM_BACKEND_CMUX_SOURCED=1
+      fi
+      ;;
+    jujutsu)
+      if [ -z "${_FM_BACKEND_JUJUTSU_SOURCED:-}" ]; then
+        # shellcheck source=/dev/null
+        . "$adapter" || return 1
+        _FM_BACKEND_JUJUTSU_SOURCED=1
       fi
       ;;
   esac
@@ -759,6 +774,7 @@ fm_backend_capture() {  # <backend> <target> <lines> [expected-label]
     zellij) fm_backend_zellij_capture "$@" ;;
     orca) fm_backend_orca_capture "$@" ;;
     cmux) fm_backend_cmux_capture "$@" ;;
+    jujutsu) fm_backend_jujutsu_capture "$@" ;;
     *) echo "error: no capture implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -821,6 +837,7 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
     zellij) fm_backend_zellij_send_text_submit "$@" ;;
     orca) fm_backend_orca_send_text_submit "$@" ;;
     cmux) fm_backend_cmux_send_text_submit "$@" ;;
+    jujutsu) fm_backend_jujutsu_send_text_submit "$@" ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -848,26 +865,29 @@ fm_backend_kill() {  # <backend> <target>
     zellij) fm_backend_zellij_kill "$@" ;;
     orca) fm_backend_orca_kill "$@" ;;
     cmux) fm_backend_cmux_kill "$@" ;;
+    jujutsu) fm_backend_jujutsu_kill "$@" ;;
     *) echo "error: no kill implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
 
-fm_backend_remove_worktree() {  # <backend> <worktree-id>
+fm_backend_remove_worktree() {  # <backend> <worktree-id> [project-path]
   local backend=$1
   shift
   fm_backend_source "$backend" || return 1
   case "$backend" in
     orca) fm_backend_orca_remove_worktree "$@" ;;
+    jujutsu) fm_backend_jujutsu_remove_worktree "$@" ;;
     *) echo "error: backend '$backend' does not own task worktrees" >&2; return 1 ;;
   esac
 }
 
-fm_backend_worktree_path() {  # <backend> <worktree-id>
+fm_backend_worktree_path() {  # <backend> <worktree-id> [project-path]
   local backend=$1
   shift
   fm_backend_source "$backend" || return 1
   case "$backend" in
     orca) fm_backend_orca_worktree_path "$@" ;;
+    jujutsu) fm_backend_jujutsu_worktree_path "$@" ;;
     *) echo "error: backend '$backend' does not own task worktrees" >&2; return 1 ;;
   esac
 }

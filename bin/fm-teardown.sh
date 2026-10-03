@@ -564,7 +564,7 @@ case "$TEARDOWN_WINDOW_COUNT:$(fm_meta_get "$META" window)" in
     esac
     ;;
 esac
-if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ]; then
+if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ] && [ "$TEARDOWN_CLEANUP_RECOVERY" != jujutsu ]; then
   if fm_backlog_transition_applies "$CONFIG" "$DATA" "$TEARDOWN_META_KIND"; then
     TEARDOWN_BACKLOG_APPLIES=1
   else
@@ -1117,6 +1117,7 @@ else
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   T=$FM_BACKEND_VALIDATED_TARGET
   [ "$BACKEND" != orca ] || T_ORCA=$T
+  [ "$BACKEND" != jujutsu ] || T_JUJUTSU=$T
 fi
 # The recorded backend, including every sibling its adapter sources, has to
 # be readable before the first destructive step. --force does not override
@@ -1140,7 +1141,8 @@ CLEANUP_RECOVERY=$TEARDOWN_CLEANUP_RECOVERY
 
 KIND=$TEARDOWN_META_KIND
 EXPECTED_TREEHOUSE_PROJECT_LOCK=
-if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] \
+EXPECTED_JUJUTSU_PROJECT_LOCK=
+if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] && [ "$BACKEND" != jujutsu ] \
    && fm_treehouse_pool_slot "$PROJ" "$WT"; then
   EXPECTED_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ") || {
     echo "REFUSED: cannot resolve the shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
@@ -1371,10 +1373,46 @@ require_orca_terminal() {
   printf '%s\n' "$terminal"
 }
 
+require_jujutsu_workspace_name() {
+  local meta=$1 name
+  name=$(meta_value "$meta" jujutsu_workspace_name)
+  if [ -z "$name" ]; then
+    echo "error: missing jujutsu_workspace_name in $meta; cannot remove Jujutsu workspace" >&2
+    return 1
+  fi
+  printf '%s\n' "$name"
+}
+
+require_jujutsu_workspace_path() {
+  local meta=$1 path
+  path=$(meta_value "$meta" jujutsu_workspace_path)
+  if [ -z "$path" ]; then
+    echo "error: missing jujutsu_workspace_path in $meta; cannot resolve Jujutsu workspace path" >&2
+    return 1
+  fi
+  printf '%s\n' "$path"
+}
+
+require_jujutsu_project() {
+  local meta=$1 project
+  project=$(meta_value "$meta" project)
+  if [ -z "$project" ]; then
+    echo "error: missing project in $meta; cannot resolve Jujutsu workspace project" >&2
+    return 1
+  fi
+  printf '%s\n' "$project"
+}
+
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
   ORCA_WORKTREE_ID=$(require_orca_worktree_id "$META") || exit 1
   T_ORCA=$(meta_value "$META" terminal)
   [ -z "$T_ORCA" ] || T=$T_ORCA
+fi
+
+if [ "$BACKEND" = jujutsu ] && [ "$KIND" != secondmate ]; then
+  JUJUTSU_WORKSPACE_NAME=$(require_jujutsu_workspace_name "$META") || exit 1
+  JUJUTSU_WORKSPACE_PATH=$(require_jujutsu_workspace_path "$META") || exit 1
+  JUJUTSU_PROJECT=$(require_jujutsu_project "$META") || exit 1
 fi
 
 # Where a harness's firstmate-owned global turn-end registry entry lives is
@@ -2993,7 +3031,7 @@ preflight_descendant_treehouse_slots() {
 }
 
 validate_firstmate_home_children_removal() {
-  local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend child_orca_worktree_id
+  local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_jujutsu_workspace_name child_jujutsu_workspace_path
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -3017,6 +3055,13 @@ validate_firstmate_home_children_removal() {
         child_proj=$(meta_value "$child_meta" project)
         validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
         require_orca_worktree_path_match "$child_orca_worktree_id" "$child_wt" || return 1
+      fi
+    elif [ "$child_backend" = jujutsu ]; then
+      child_jujutsu_workspace_name=$(require_jujutsu_workspace_name "$child_meta") || return 1
+      child_jujutsu_workspace_path=$(require_jujutsu_workspace_path "$child_meta") || return 1
+      if [ -n "$child_jujutsu_workspace_path" ] && [ -e "$child_jujutsu_workspace_path" ]; then
+        child_proj=$(meta_value "$child_meta" project)
+        validate_child_worktree_for_removal "$child_jujutsu_workspace_path" "$child_proj" >/dev/null || return 1
       fi
     elif [ -n "$child_wt" ] && [ -e "$child_wt" ]; then
       child_proj=$(meta_value "$child_meta" project)
@@ -3215,6 +3260,9 @@ cleanup_firstmate_home_children() {
     child_backend=$(fm_backend_of_meta "$child_meta")
     if [ "$child_backend" = orca ]; then
       child_t=$(meta_value "$child_meta" terminal)
+    elif [ "$child_backend" = jujutsu ]; then
+      # For jujutsu, the target is managed by the session backend
+      child_t=$(fm_backend_target_of_meta "$child_meta")
     else
       child_t=$(fm_backend_target_of_meta "$child_meta")
     fi
@@ -3222,6 +3270,13 @@ cleanup_firstmate_home_children() {
       child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
       if [ -n "$child_wt" ] && [ -e "$child_wt" ]; then
         validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+      fi
+    elif [ "$child_backend" = jujutsu ] && [ "$child_kind" != secondmate ]; then
+      # Validate jujutsu workspace for removal
+      child_jujutsu_workspace_name=$(require_jujutsu_workspace_name "$child_meta") || return 1
+      child_jujutsu_workspace_path=$(require_jujutsu_workspace_path "$child_meta") || return 1
+      if [ -n "$child_jujutsu_workspace_path" ] && [ -e "$child_jujutsu_workspace_path" ]; then
+        validate_child_worktree_for_removal "$child_jujutsu_workspace_path" "$child_proj" >/dev/null || return 1
       fi
     fi
     if [ -n "$child_t" ]; then
