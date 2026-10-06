@@ -176,11 +176,23 @@ if [ "$status" -eq 0 ] && [ "$mutation" = tab-create ]; then
       ;;
   esac
 fi
-if [ "$status" -eq 0 ] && [ "${1:-} ${2:-}" = "pane get" ] && [ -d "$POST_CREATE_ABORT_CONTROL" ]; then
+if [ "$status" -eq 0 ] && [ -d "$POST_CREATE_ABORT_CONTROL" ]; then
+  case "${1:-} ${2:-}" in
+    "pane get")
+      read_pane=${3:-}
+      cwd_filter='.result.pane.foreground_cwd = $cwd'
+      ;;
+    "pane process-info")
+      read_pane=$(arg_value --pane "$@" || true)
+      cwd_filter='.result.process_info.foreground_processes |= map(.cwd = $cwd)'
+      ;;
+    *) read_pane= ;;
+  esac
   for task_dir in "$POST_CREATE_ABORT_CONTROL"/abort-*; do
+    [ -n "$read_pane" ] || break
     [ -d "$task_dir" ] || continue
-    [ "${3:-}" = "$(cat "$task_dir/task-pane" 2>/dev/null || true)" ] || continue
-    out=$(printf '%s' "$out" | jq --arg cwd "$POST_CREATE_ABORT_CONTROL/not-a-worktree" '.result.pane.foreground_cwd = $cwd')
+    [ "$read_pane" = "$(cat "$task_dir/task-pane" 2>/dev/null || true)" ] || continue
+    out=$(printf '%s' "$out" | jq --arg cwd "$POST_CREATE_ABORT_CONTROL/not-a-worktree" "$cwd_filter")
     break
   done
 fi
@@ -851,7 +863,7 @@ if wait "$ABORT_A_PID"; then ABORT_A_STATUS=0; else ABORT_A_STATUS=$?; fi
 if wait "$ABORT_B_PID"; then ABORT_B_STATUS=0; else ABORT_B_STATUS=$?; fi
 finish_concurrent_expected_abort abort-a "$ABORT_A_STATUS" "$TMP_ROOT/abort-a.out" "$TMP_ROOT/abort-a.err"
 finish_concurrent_expected_abort abort-b "$ABORT_B_STATUS" "$TMP_ROOT/abort-b.out" "$TMP_ROOT/abort-b.err"
-# The forced foreground_cwd is a plain non-git directory, which the discovery
+# The forced pane cwd is a plain non-git directory, which the discovery
 # poll now screens out on every read rather than adopting, so the armed failure
 # arrives as the poll's own deadline refusal naming that path.
 grep -F "did not enter an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \

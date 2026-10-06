@@ -297,6 +297,29 @@ case "$p" in
 esac
 pass "real herdr: current_path reads the pane's live cwd"
 
+SUBSHELL_DIR=$(cd "$SM_SCRATCH" && pwd -P)/subshell-worktree
+mkdir -p "$SUBSHELL_DIR"
+fm_backend_herdr_send_text_line "$TARGET" "bash --norc --noprofile -c 'cd \"$SUBSHELL_DIR\" && exec bash --norc --noprofile -i'"
+p=
+for _ in $(seq 1 20); do
+  p=$(fm_backend_herdr_current_path "$TARGET") || fail "current_path failed inside a nested shell"
+  [ "$p" = "$SUBSHELL_DIR" ] && break
+  sleep 0.25
+done
+[ "$p" = "$SUBSHELL_DIR" ] \
+  || fail "real herdr: current_path did not follow a nested shell into '$SUBSHELL_DIR' (the treehouse get shape), got '$p'"
+fm_backend_herdr_send_text_line "$TARGET" "exit"
+for _ in $(seq 1 20); do
+  p=$(fm_backend_herdr_current_path "$TARGET") || fail "current_path failed after the nested shell exited"
+  case "$p" in */tmp) break ;; esac
+  sleep 0.25
+done
+case "$p" in
+  */tmp) : ;;
+  *) fail "real herdr: current_path did not return to the pane shell's cwd after the nested shell exited, got '$p'" ;;
+esac
+pass "real herdr: current_path follows a nested foreground shell's cwd and returns to the pane shell when it exits"
+
 # --- busy_state on a real claude harness (verified in herdr-verification-p2.md) ---
 
 if [ "${FM_HERDR_SMOKE_REAL_CLAUDE:-0}" = 1 ] && command -v claude >/dev/null 2>&1; then

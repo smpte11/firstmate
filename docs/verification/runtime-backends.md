@@ -1147,6 +1147,30 @@ The CLI matrix was checked directly:
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
+### Foreground process cwd
+
+Measured 2026-10-06 on macOS aarch64 against Herdr 0.9.1 (protocol 22) in an isolated `fm-lab-` session through `bin/fm-herdr-lab.sh run`, and against tuios's herdr front (`herdr 0.9.3+tuios`, protocol 22) on a throwaway tuios daemon with its own `XDG_RUNTIME_DIR`.
+Each pane's shell first ran `cd $LAB/other`, then a nested interactive shell in another directory, the shape `treehouse get` leaves:
+
+```sh
+herdr pane run "$PANE" "bash --norc --noprofile -c 'cd $LAB/sub && exec bash --norc --noprofile -i'"
+herdr pane get "$PANE" | jq -c '.result.pane | {cwd, foreground_cwd}'
+herdr pane process-info --pane "$PANE" | jq -c '.result.process_info | {fg: .foreground_process_group_id, procs: [.foreground_processes[] | {pid, cwd}]}'
+```
+
+```text
+# Herdr 0.9.1
+{"cwd":"/private/tmp/fmhp.XeapvF/other","foreground_cwd":"/private/tmp/fmhp.XeapvF/sub"}
+{"fg":77980,"procs":[{"pid":77980,"cwd":"/private/tmp/fmhp.XeapvF/sub"}]}
+# herdr 0.9.3+tuios
+{"cwd":"/private/tmp/fmtu.Ycl2wc/other","foreground_cwd":"/private/tmp/fmtu.Ycl2wc/other"}
+{"fg":78916,"procs":[{"pid":78916,"cwd":"/private/tmp/fmtu.Ycl2wc/sub"}]}
+```
+
+Herdr's `foreground_cwd` follows the nested shell, while tuios reports it as the pane shell's cwd, so a spawn there refused with `treehouse get did not enter an isolated worktree within 60s`.
+On both, the foreground group leader's `cwd` in `pane process-info` is the nested shell's directory, which is what `fm_backend_herdr_current_path` reads first.
+`tests/fm-backend-herdr.test.sh` pins the leader read and its `foreground_cwd` fallback portably, and `tests/fm-backend-herdr-smoke.test.sh` checks the nested-shell read against real Herdr.
+
 ### fm-remote server birth and login-keychain access
 
 Measured 2026-09-09 on macOS 26 (Darwin 25.6.0) aarch64 with Claude Code 2.1.266 and Herdr 0.9.0, the guarantee behind `bin/fm-remote-herdr-guard.sh` and the doctor's `herdr-server` check: login-keychain access follows the audit session a process was born into, never the launch shape or the shell.

@@ -696,6 +696,7 @@ The native busy verdict is verified the same way, so a shell-only pane never rea
 The `pane process-info` subcommand that this process-level proof depends on is present in every supported release client from the 0.7.1 floor upward (measured 2026-09-10 on the pinned 0.7.1, 0.7.3, 0.7.4, and 0.7.5 release clients - [verification](verification/runtime-backends.md) "Stale agent registration").
 The response shape the adapter parses (`result.type` of `pane_process_info`, `process_info.shell_pid`, and `foreground_processes` entries carrying `name`, `argv0`, `argv`, and `cmdline`) is verified live only on Herdr 0.9.0.
 The idle-shell proof's narrower parse was previously verified on 0.7.5.
+The worktree-discovery cwd read takes the `cwd` of the foreground entry whose `pid` is `process_info.foreground_process_group_id`, verified on Herdr 0.9.1 and on tuios's herdr front ([verification](verification/runtime-backends.md) "Foreground process cwd"); a view without that cwd falls back to `pane get`'s `foreground_cwd`.
 A server response below 0.9.0 has not been measured for this parse.
 An unreadable or unparseable process view reads `unknown`, which refuses lifecycle verbs and recovery rather than trusting the registration.
 
