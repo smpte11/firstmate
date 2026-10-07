@@ -518,6 +518,12 @@ The adapter starts and polls a named server before workspace, tab, pane, or agen
 Every Herdr invocation goes through `fm_backend_herdr_cli`, which sets the environment and passes an explicit trailing `--session <name>`.
 An environment variable alone is not reliable when another Herdr server is running.
 
+The one exception is herdr's implicit `default` session while `HERDR_SOCKET_PATH` is set.
+The operator then chose the endpoint, so the adapter passes neither `--session` nor `HERDR_SESSION` and herdr uses the socket.
+An explicit `--session default` makes the real client ignore `HERDR_SOCKET_PATH`, and a herdr-compatible server behind that socket, such as tuios's Herdr front, can reject the flag.
+Every non-default session, and the default session without `HERDR_SOCKET_PATH`, keeps the explicit scope.
+The same rule covers the adapter's per-client status reads.
+
 When the selected named server is not running, the adapter launches it without these inherited values:
 
 - Firstmate home and directory overrides.

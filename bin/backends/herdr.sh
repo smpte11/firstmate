@@ -381,7 +381,9 @@ fm_backend_herdr_workspace_label() {
 # keep every call site a minimal, append-only diff) always routes correctly,
 # including starting a genuinely separate, isolated server process. The env
 # var is kept alongside it - harmless, self-documenting, and forward-
-# compatible if a future herdr build honors it. Never used by
+# compatible if a future herdr build honors it. The one exception is the
+# default session under an explicit HERDR_SOCKET_PATH (see
+# fm_backend_herdr_session_targeted). Never used by
 # fm_backend_herdr_version_check, which is intentionally session-independent
 # (reads only .client.* fields).
 fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
@@ -396,18 +398,18 @@ fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
   # The long-lived `server` launch is exec'd straight through: buffering its
   # stderr would hold this call open for the server's whole lifetime.
   if [ "${1:-}" = server ]; then
-    HERDR_SESSION="$session" "$client_bin" "$@" --session "$session"
+    fm_backend_herdr_run_scoped "$session" "$client_bin" "$@"
     return $?
   fi
   failed_bin=$client_bin
-  { err=$(HERDR_SESSION="$session" "$failed_bin" "$@" --session "$session" 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
+  { err=$(fm_backend_herdr_run_scoped "$session" "$failed_bin" "$@" 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
   if [ "$rc" -ne 0 ]; then
     case "$err" in
       *protocol_mismatch*)
         fm_backend_herdr_client_select "$session" force
         selected_bin=$(fm_backend_herdr_bin)
         if [ "$selected_bin" != "$failed_bin" ]; then
-          HERDR_SESSION="$session" "$selected_bin" "$@" --session "$session"
+          fm_backend_herdr_run_scoped "$session" "$selected_bin" "$@"
           return $?
         fi
         ;;
@@ -415,6 +417,29 @@ fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
   fi
   [ -z "$err" ] || printf '%s\n' "$err" >&2
   return "$rc"
+}
+
+# fm_backend_herdr_session_targeted <session>: whether a call to <session>
+# carries the explicit session scope (HERDR_SESSION plus trailing --session).
+# It always does, except for herdr's implicit "default" session while the
+# operator has pointed herdr at an explicit endpoint with HERDR_SOCKET_PATH.
+# Then the socket alone selects the server: an explicit `--session default`
+# makes the real client ignore HERDR_SOCKET_PATH, and herdr-compatible servers
+# behind that socket (e.g. tuios's herdr front) reject the trailing flag.
+fm_backend_herdr_session_targeted() {  # <session>
+  [ "$1" != default ] || [ -z "${HERDR_SOCKET_PATH:-}" ]
+}
+
+# fm_backend_herdr_run_scoped <session> <bin> <args...>: run <bin> <args...>
+# with the session scope fm_backend_herdr_session_targeted selects.
+fm_backend_herdr_run_scoped() {  # <session> <bin> <herdr-args...>
+  local session=$1 bin=$2
+  shift 2
+  if fm_backend_herdr_session_targeted "$session"; then
+    HERDR_SESSION="$session" "$bin" "$@" --session "$session"
+  else
+    "$bin" "$@"
+  fi
 }
 
 # --- client selection --------------------------------------------------------
@@ -468,7 +493,7 @@ fm_backend_herdr_client_candidates() {
 # client did not report. Never fails.
 fm_backend_herdr_client_status() {  # <bin> <session>
   local bin=$1 session=$2 out
-  out=$(HERDR_SESSION="$session" "$bin" status --json --session "$session" 2>/dev/null) || out=
+  out=$(fm_backend_herdr_run_scoped "$session" "$bin" status --json 2>/dev/null) || out=
   printf '%s' "$out" | jq -r '
     [ (if (.server | type) == "object" and .server.running != null then (.server.running | tostring) else "" end),
       (if (.server | type) == "object" and (.server | has("compatible"))

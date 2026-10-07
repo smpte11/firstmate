@@ -401,6 +401,55 @@ test_cli_helper_sets_env_and_appends_trailing_session_flag() {
   pass "fm_backend_herdr_cli: sets HERDR_SESSION AND appends a trailing --session flag on every call"
 }
 
+test_cli_helper_default_session_with_socket_path_omits_session_flag() {
+  local dir log resp fb
+  dir="$TMP_ROOT/cli-default-socket"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SOCKET_PATH="$dir/herdr.sock" \
+    bash -c 'unset HERDR_SESSION; . "$0/bin/backends/herdr.sh"; fm_backend_herdr_cli default workspace list' "$ROOT"
+  expect_code 0 $? "fm_backend_herdr_cli default with HERDR_SOCKET_PATH should succeed"
+  assert_contains "$(cat "$log")" "HERDR_SESSION="$'\x1f''workspace'$'\x1f''list' \
+    "default session with HERDR_SOCKET_PATH must not set HERDR_SESSION and must pass no trailing flag"
+  assert_not_contains "$(cat "$log")" '--session' \
+    "default session with HERDR_SOCKET_PATH must not pass --session"
+  pass "fm_backend_herdr_cli: default session plus HERDR_SOCKET_PATH omits --session and HERDR_SESSION"
+}
+
+test_cli_helper_default_session_without_socket_path_keeps_session_flag() {
+  local dir log resp fb
+  dir="$TMP_ROOT/cli-default-nosocket"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c 'unset HERDR_SESSION HERDR_SOCKET_PATH; . "$0/bin/backends/herdr.sh"; fm_backend_herdr_cli default workspace list' "$ROOT"
+  expect_code 0 $? "fm_backend_herdr_cli default without HERDR_SOCKET_PATH should succeed"
+  assert_contains "$(cat "$log")" "HERDR_SESSION=default"$'\x1f''workspace'$'\x1f''list'$'\x1f''--session'$'\x1f''default' \
+    "default session without HERDR_SOCKET_PATH must keep HERDR_SESSION and the trailing --session flag"
+  pass "fm_backend_herdr_cli: default session without HERDR_SOCKET_PATH keeps --session default"
+}
+
+test_cli_helper_named_session_with_socket_path_keeps_session_flag() {
+  local dir log resp fb
+  dir="$TMP_ROOT/cli-named-socket"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SOCKET_PATH="$dir/herdr.sock" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_cli fmtest workspace list' "$ROOT"
+  expect_code 0 $? "fm_backend_herdr_cli named session with HERDR_SOCKET_PATH should succeed"
+  assert_contains "$(cat "$log")" "HERDR_SESSION=fmtest"$'\x1f''workspace'$'\x1f''list'$'\x1f''--session'$'\x1f''fmtest' \
+    "a non-default session must keep HERDR_SESSION and --session even when HERDR_SOCKET_PATH is set"
+  pass "fm_backend_herdr_cli: non-default session keeps --session when HERDR_SOCKET_PATH is set"
+}
+
+test_client_status_default_session_with_socket_path_omits_session_flag() {
+  local dir log resp fb
+  dir="$TMP_ROOT/client-status-default-socket"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SOCKET_PATH="$dir/herdr.sock" \
+    bash -c 'unset HERDR_SESSION; . "$0/bin/backends/herdr.sh"; fm_backend_herdr_client_status "$1/herdr" default' "$ROOT" "$fb" >/dev/null
+  assert_not_contains "$(cat "$log")" '--session' \
+    "client_status must not pass --session for the default session when HERDR_SOCKET_PATH is set"
+  pass "fm_backend_herdr_client_status: default session plus HERDR_SOCKET_PATH omits --session"
+}
+
 # --- client selection: a stale client shadowing a compatible one -------------
 #
 # Two herdr clients on PATH is a real host shape (a self-updated ~/.local/bin
@@ -5858,6 +5907,10 @@ test_workspace_label_secondmate_marker_trims_whitespace
 test_workspace_label_empty_marker_falls_back_to_primary
 test_workspace_label_different_secondmates_get_different_labels
 test_cli_helper_sets_env_and_appends_trailing_session_flag
+test_cli_helper_default_session_with_socket_path_omits_session_flag
+test_cli_helper_default_session_without_socket_path_keeps_session_flag
+test_cli_helper_named_session_with_socket_path_keeps_session_flag
+test_client_status_default_session_with_socket_path_omits_session_flag
 test_agent_state_bypasses_a_stale_client_shadowing_a_compatible_one
 test_recovery_grade_read_widens_only_at_its_own_boundary
 test_stale_registration_over_a_shell_only_pane_is_agent_free
